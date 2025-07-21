@@ -12,16 +12,29 @@ public struct NetworkTransport {
 }
 
 /// TCP连接状态
-public enum ConnectionState {
+public enum ConnectionState: Equatable {
     case disconnected
     case connecting
     case connected
     case failed(Error)
+    
+    public static func == (lhs: ConnectionState, rhs: ConnectionState) -> Bool {
+        switch (lhs, rhs) {
+        case (.disconnected, .disconnected),
+             (.connecting, .connecting),
+             (.connected, .connected):
+            return true
+        case (.failed, .failed):
+            return true  // 简化处理，不比较具体错误
+        default:
+            return false
+        }
+    }
 }
 
 /// 网络传输协议
 public protocol NetworkTransportProtocol {
-    func connect(to host: String, port: Int) async throws
+    func connect(to host: String, port: Int, useTLS: Bool, tlsConfig: TLSConfiguration) async throws
     func disconnect() async
     func send(data: Data) async throws
     func receive() async throws -> Data
