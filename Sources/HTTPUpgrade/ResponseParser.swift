@@ -75,8 +75,14 @@ public struct ResponseParser {
         }
         
         // 验证Accept密钥
-        guard let accept = getHeaderValue(response.headers, key: "sec-websocket-accept"),
-              accept == expectedAccept else {
+        guard let accept = getHeaderValue(response.headers, key: "sec-websocket-accept") else {
+            return .invalid("缺失Sec-WebSocket-Accept头部")
+        }
+        
+        let trimmedAccept = accept.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedExpected = expectedAccept.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard trimmedAccept == trimmedExpected else {
             return .invalid("Sec-WebSocket-Accept密钥验证失败")
         }
         

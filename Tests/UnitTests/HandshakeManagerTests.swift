@@ -25,59 +25,18 @@ final class HandshakeManagerTests: XCTestCase {
     func testSuccessfulHandshake() async throws {
         let url = URL(string: "ws://example.com/chat")!
         
-        // 先发送请求以获取生成的客户端密钥
-        let tempResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: placeholder\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = tempResponse.data(using: .utf8)!
-        
-        // 执行握手来获取发送的请求
-        do {
-            _ = try await handshakeManager.performSimpleHandshake(url: url, transport: mockTransport)
-        } catch {
-            // 忽略验证失败，我们只需要获取发送的请求
-        }
-        
-        // 从发送的请求中提取客户端密钥
-        guard let sentData = mockTransport.lastSentData,
-              let sentRequest = String(data: sentData, encoding: .utf8) else {
-            XCTFail("应该发送请求数据")
-            return
-        }
-        
-        let clientKey = extractClientKeyFromRequest(sentRequest)
-        
-        // 计算正确的Accept密钥
-        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
-        
-        // 重置mock并使用正确的Accept密钥
-        mockTransport.lastSentData = nil
-        let correctResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: \(correctAccept)\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = correctResponse.data(using: .utf8)!
+        // 使用智能Mock Transport，它会自动处理密钥验证
+        let smartTransport = SmartMockTransport()
         
         let result = try await handshakeManager.performSimpleHandshake(
             url: url,
-            transport: mockTransport
+            transport: smartTransport
         )
         
         XCTAssertTrue(result.success)
-        XCTAssertNil(result.negotiatedProtocol)
+        XCTAssertNil(result.negotiatedProtocol)  
         XCTAssertTrue(result.negotiatedExtensions.isEmpty)
-        XCTAssertNotNil(mockTransport.lastSentData)
+        XCTAssertNotNil(smartTransport.lastSentData)
     }
     
     /// 从请求字符串中提取客户端密钥
@@ -141,29 +100,12 @@ final class HandshakeManagerTests: XCTestCase {
         let url = URL(string: "ws://example.com/chat")!
         let protocols = ["chat", "superchat"]
         
-        // 先获取客户端密钥
-        let clientKey = try await getClientKeyForTest(url: url, protocols: protocols)
-        
-        // 计算正确的Accept密钥
-        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
-        
-        // 模拟服务器响应（选择了chat协议）
-        let protocolResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: \(correctAccept)\r
-        Sec-WebSocket-Protocol: chat\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = protocolResponse.data(using: .utf8)!
-        mockTransport.lastSentData = nil
+        // 使用智能Mock Transport，设置协商chat协议
+        let smartTransport = SmartMockTransport(protocolToNegotiate: "chat")
         
         let result = try await handshakeManager.performHandshake(
             url: url,
-            transport: mockTransport,
+            transport: smartTransport,
             protocols: protocols
         )
         
@@ -171,7 +113,7 @@ final class HandshakeManagerTests: XCTestCase {
         XCTAssertEqual(result.negotiatedProtocol, "chat")
         
         // 验证请求包含子协议
-        if let sentData = mockTransport.lastSentData,
+        if let sentData = smartTransport.lastSentData,
            let sentRequest = String(data: sentData, encoding: .utf8) {
             XCTAssertTrue(sentRequest.contains("Sec-WebSocket-Protocol: chat, superchat"))
         } else {
@@ -184,29 +126,12 @@ final class HandshakeManagerTests: XCTestCase {
         let url = URL(string: "ws://example.com/chat")!
         let extensions = ["permessage-deflate"]
         
-        // 先获取客户端密钥
-        let clientKey = try await getClientKeyForTest(url: url, extensions: extensions)
-        
-        // 计算正确的Accept密钥
-        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
-        
-        // 模拟服务器响应（支持deflate扩展）
-        let extensionResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: \(correctAccept)\r
-        Sec-WebSocket-Extensions: permessage-deflate\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = extensionResponse.data(using: .utf8)!
-        mockTransport.lastSentData = nil
+        // 使用智能Mock Transport，设置协商permessage-deflate扩展
+        let smartTransport = SmartMockTransport(extensionsToNegotiate: ["permessage-deflate"])
         
         let result = try await handshakeManager.performHandshake(
             url: url,
-            transport: mockTransport,
+            transport: smartTransport,
             protocols: [],
             extensions: extensions,
             additionalHeaders: [:]
@@ -357,27 +282,12 @@ final class HandshakeManagerTests: XCTestCase {
             "User-Agent": "TestClient/1.0"
         ]
         
-        // 先获取客户端密钥
-        let clientKey = try await getClientKeyForTest(url: url, additionalHeaders: additionalHeaders)
-        
-        // 计算正确的Accept密钥
-        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
-        
-        let successResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: \(correctAccept)\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = successResponse.data(using: .utf8)!
-        mockTransport.lastSentData = nil
+        // 使用智能Mock Transport
+        let smartTransport = SmartMockTransport()
         
         let result = try await handshakeManager.performHandshake(
             url: url,
-            transport: mockTransport,
+            transport: smartTransport,
             protocols: [],
             extensions: [],
             additionalHeaders: additionalHeaders
@@ -386,7 +296,7 @@ final class HandshakeManagerTests: XCTestCase {
         XCTAssertTrue(result.success)
         
         // 验证请求包含额外头部
-        if let sentData = mockTransport.lastSentData,
+        if let sentData = smartTransport.lastSentData,
            let sentRequest = String(data: sentData, encoding: .utf8) {
             XCTAssertTrue(sentRequest.contains("Authorization: Bearer token123"))
             XCTAssertTrue(sentRequest.contains("User-Agent: TestClient/1.0"))
@@ -399,29 +309,14 @@ final class HandshakeManagerTests: XCTestCase {
     func testComplexExtensionParsing() async throws {
         let url = URL(string: "ws://example.com/chat")!
         
-        // 先获取客户端密钥
-        let clientKey = try await getClientKeyForTest(url: url)
-        
-        // 计算正确的Accept密钥
-        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
-        
-        // 模拟服务器响应（多个扩展）
-        let extensionResponse = """
-        HTTP/1.1 101 Switching Protocols\r
-        Upgrade: websocket\r
-        Connection: Upgrade\r
-        Sec-WebSocket-Accept: \(correctAccept)\r
-        Sec-WebSocket-Extensions: permessage-deflate, x-webkit-deflate-frame\r
-        \r
-
-        """
-        
-        mockTransport.nextReceiveData = extensionResponse.data(using: .utf8)!
-        mockTransport.lastSentData = nil
+        // 使用智能Mock Transport，设置多个扩展
+        let smartTransport = SmartMockTransport(
+            extensionsToNegotiate: ["permessage-deflate", "x-webkit-deflate-frame"]
+        )
         
         let result = try await handshakeManager.performSimpleHandshake(
             url: url,
-            transport: mockTransport
+            transport: smartTransport
         )
         
         XCTAssertTrue(result.success)
@@ -432,6 +327,51 @@ final class HandshakeManagerTests: XCTestCase {
 }
 
 // MARK: - Mock Transport
+
+/// 密钥提取Mock传输层，用于获取客户端密钥
+class KeyExtractionMockTransport: NetworkTransportProtocol {
+    var lastSentData: Data?
+    var extractedClientKey: String?
+    
+    func connect(to host: String, port: Int, useTLS: Bool, tlsConfig: TLSConfiguration = .secure) async throws {
+        // Mock实现，不做任何操作
+    }
+    
+    func send(data: Data) async throws {
+        lastSentData = data
+        
+        // 提取客户端密钥
+        if let request = String(data: data, encoding: .utf8) {
+            extractedClientKey = extractClientKeyFromRequest(request)
+        }
+    }
+    
+    func receive() async throws -> Data {
+        // 返回一个无效响应，让握手失败
+        let invalidResponse = "HTTP/1.1 500 Internal Server Error\r\n\r\n"
+        return invalidResponse.data(using: .utf8)!
+    }
+    
+    func disconnect() async {
+        // Mock实现，不做任何操作
+    }
+    
+    /// 从请求中提取客户端密钥
+    private func extractClientKeyFromRequest(_ request: String) -> String {
+        let lines = request.components(separatedBy: "\r\n")
+        
+        for line in lines {
+            if line.hasPrefix("Sec-WebSocket-Key:") {
+                let parts = line.components(separatedBy: ":")
+                if parts.count >= 2 {
+                    return parts[1].trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        
+        return "dGhlIHNhbXBsZSBub25jZQ==" // 默认值
+    }
+}
 
 /// Mock网络传输层用于测试
 class MockTransport: NetworkTransportProtocol {
@@ -466,6 +406,91 @@ class MockTransport: NetworkTransportProtocol {
     
     func disconnect() async {
         // Mock实现，不做任何操作
+    }
+}
+
+/// 智能Mock传输层，自动处理WebSocket握手响应
+class SmartMockTransport: NetworkTransportProtocol {
+    var lastSentData: Data?
+    var shouldFailSend = false
+    var simulateTimeout = false
+    var protocolToNegotiate: String?
+    var extensionsToNegotiate: [String] = []
+    
+    init(protocolToNegotiate: String? = nil, extensionsToNegotiate: [String] = []) {
+        self.protocolToNegotiate = protocolToNegotiate
+        self.extensionsToNegotiate = extensionsToNegotiate
+    }
+    
+    func connect(to host: String, port: Int, useTLS: Bool, tlsConfig: TLSConfiguration = .secure) async throws {
+        // Mock实现，不做任何操作
+    }
+    
+    func send(data: Data) async throws {
+        if shouldFailSend {
+            throw NetworkError.connectionReset
+        }
+        lastSentData = data
+    }
+    
+    func receive() async throws -> Data {
+        if simulateTimeout {
+            // 模拟长时间等待
+            try await Task.sleep(nanoseconds: 1_000_000_000) // 1秒
+        }
+        
+        // 从发送的请求中提取客户端密钥
+        guard let sentData = lastSentData,
+              let request = String(data: sentData, encoding: .utf8) else {
+            throw NetworkError.connectionReset
+        }
+        
+        let clientKey = extractClientKeyFromRequest(request)
+        let acceptKey = CryptoUtilities.computeWebSocketAccept(for: clientKey)
+        
+        // 构建响应
+        var response = """
+        HTTP/1.1 101 Switching Protocols\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Sec-WebSocket-Accept: \(acceptKey)\r
+
+        """
+        
+        // 添加协议协商
+        if let protocolName = protocolToNegotiate {
+            response += "Sec-WebSocket-Protocol: \(protocolName)\r\n"
+        }
+        
+        // 添加扩展协商
+        if !extensionsToNegotiate.isEmpty {
+            let extensionsString = extensionsToNegotiate.joined(separator: ", ")
+            response += "Sec-WebSocket-Extensions: \(extensionsString)\r\n"
+        }
+        
+        response += "\r\n"
+        
+        return response.data(using: .utf8)!
+    }
+    
+    func disconnect() async {
+        // Mock实现，不做任何操作
+    }
+    
+    /// 从请求中提取客户端密钥
+    private func extractClientKeyFromRequest(_ request: String) -> String {
+        let lines = request.components(separatedBy: "\r\n")
+        
+        for line in lines {
+            if line.hasPrefix("Sec-WebSocket-Key:") {
+                let parts = line.components(separatedBy: ":")
+                if parts.count >= 2 {
+                    return parts[1].trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        
+        return "dGhlIHNhbXBsZSBub25jZQ==" // 默认值
     }
 }
 
