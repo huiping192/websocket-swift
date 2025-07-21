@@ -98,6 +98,6 @@ public struct WebSocketFrame {
     /// 获取掩码密钥的Data表示（用于与CryptoUtilities兼容）
     public var maskingKeyData: Data? {
         guard let key = maskingKey else { return nil }
-        return withUnsafeBytes(of: key.bigEndian) { Data($0) }
+        return WebSocketMaskingKey.toData(key)
     }
 }

@@ -23,12 +23,12 @@ public enum FrameType: UInt8 {
     
     /// 检查是否为数据帧
     public var isDataFrame: Bool {
-        return self.rawValue <= 0x2
+        return self.rawValue <= 0x7  // 0x0-0x7 are data frames (including reserved)
     }
     
     /// 检查是否为控制帧
     public var isControlFrame: Bool {
-        return self.rawValue >= 0x8
+        return self.rawValue >= 0x8  // 0x8-0xF are control frames (including reserved)
     }
     
     /// 检查是否为保留操作码

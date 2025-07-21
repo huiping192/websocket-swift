@@ -9,14 +9,12 @@ public struct WebSocketMaskingKey {
     /// 生成掩码密钥 - 兼容CryptoUtilities和架构设计
     public static func generate() -> UInt32 {
         let keyData = CryptoUtilities.generateMaskingKey()
-        return keyData.withUnsafeBytes { bytes in
-            bytes.load(as: UInt32.self).bigEndian
-        }
+        return CryptoUtilities.fromBigEndian(keyData, as: UInt32.self) ?? 0
     }
     
     /// 将UInt32掩码密钥转换为Data（用于CryptoUtilities）
     public static func toData(_ key: UInt32) -> Data {
-        return withUnsafeBytes(of: key.bigEndian) { Data($0) }
+        return CryptoUtilities.toBigEndian(key)
     }
 }
 
