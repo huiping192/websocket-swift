@@ -1,6 +1,7 @@
 import XCTest
 @testable import HTTPUpgrade
 @testable import NetworkTransport
+@testable import Utilities
 
 /// HandshakeManager单元测试
 final class HandshakeManagerTests: XCTestCase {
@@ -53,8 +54,7 @@ final class HandshakeManagerTests: XCTestCase {
         let clientKey = extractClientKeyFromRequest(sentRequest)
         
         // 计算正确的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let correctAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         // 重置mock并使用正确的Accept密钥
         mockTransport.lastSentData = nil
@@ -145,8 +145,7 @@ final class HandshakeManagerTests: XCTestCase {
         let clientKey = try await getClientKeyForTest(url: url, protocols: protocols)
         
         // 计算正确的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let correctAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         // 模拟服务器响应（选择了chat协议）
         let protocolResponse = """
@@ -189,8 +188,7 @@ final class HandshakeManagerTests: XCTestCase {
         let clientKey = try await getClientKeyForTest(url: url, extensions: extensions)
         
         // 计算正确的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let correctAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         // 模拟服务器响应（支持deflate扩展）
         let extensionResponse = """
@@ -363,8 +361,7 @@ final class HandshakeManagerTests: XCTestCase {
         let clientKey = try await getClientKeyForTest(url: url, additionalHeaders: additionalHeaders)
         
         // 计算正确的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let correctAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         let successResponse = """
         HTTP/1.1 101 Switching Protocols\r
@@ -406,8 +403,7 @@ final class HandshakeManagerTests: XCTestCase {
         let clientKey = try await getClientKeyForTest(url: url)
         
         // 计算正确的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let correctAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let correctAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         // 模拟服务器响应（多个扩展）
         let extensionResponse = """

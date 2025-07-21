@@ -55,7 +55,7 @@ let package = Package(
         ),
         .target(
             name: "HTTPUpgrade",
-            dependencies: ["Utilities"],
+            dependencies: ["Utilities", "NetworkTransport"],
             path: "Sources/HTTPUpgrade"
         ),
         .target(

@@ -1,4 +1,5 @@
 import Foundation
+import Utilities
 
 /// HTTP响应解析器
 /// 负责解析WebSocket握手的HTTP响应
@@ -288,8 +289,7 @@ extension ResponseParser {
         }
         
         // 计算期望的Accept密钥
-        let requestBuilder = RequestBuilder()
-        let expectedAccept = requestBuilder.computeWebSocketAccept(for: clientKey)
+        let expectedAccept = CryptoUtilities.computeWebSocketAccept(for: clientKey)
         
         return validateHandshakeResponse(response, expectedAccept: expectedAccept)
     }

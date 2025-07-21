@@ -13,9 +13,13 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 
+.swiftpm/
+.vscode/
+
 ## Playgrounds
 timeline.xctimeline
 playground.xcworkspace
+.claude/settings.local.json
 
 # Swift Package Manager
 #

@@ -6,7 +6,8 @@
       "Bash(swift build)",
       "Bash(swift run:*)",
       "Bash(swift test)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": []
   }

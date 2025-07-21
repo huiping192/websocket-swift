@@ -1,5 +1,6 @@
 import Foundation
 import NetworkTransport
+import Utilities
 
 /// WebSocket握手管理器
 /// 负责完整的WebSocket握手流程
@@ -110,7 +111,7 @@ public final class HandshakeManager: HandshakeManagerProtocol {
         }
         
         // 如果无法提取，生成一个新的密钥作为备用
-        return requestBuilder.generateWebSocketKey()
+        return CryptoUtilities.generateWebSocketKey()
     }
     
     /// 解析扩展字符串

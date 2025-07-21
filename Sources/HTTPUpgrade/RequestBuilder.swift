@@ -1,10 +1,5 @@
 import Foundation
-#if canImport(CryptoKit)
-import CryptoKit
-#endif
-#if canImport(CommonCrypto)
-import CommonCrypto
-#endif
+import Utilities
 
 /// HTTP升级请求构建器
 /// 负责构建WebSocket握手的HTTP请求
@@ -12,9 +7,6 @@ public struct RequestBuilder {
     
     /// WebSocket协议版本
     public static let webSocketVersion = "13"
-    
-    /// WebSocket魔术字符串
-    public static let magicString = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     
     public init() {}
     
@@ -39,7 +31,7 @@ public struct RequestBuilder {
         let path = url.path.isEmpty ? "/" : url.path
         let query = url.query.map { "?\($0)" } ?? ""
         let fullPath = path + query
-        let key = generateWebSocketKey()
+        let key = CryptoUtilities.generateWebSocketKey()
         
         var request = "GET \(fullPath) HTTP/1.1\r\n"
         
@@ -83,32 +75,6 @@ public struct RequestBuilder {
         return request
     }
     
-    /// 生成WebSocket密钥
-    /// - Returns: Base64编码的16字节随机密钥
-    public func generateWebSocketKey() -> String {
-        let keyData = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-        return keyData.base64EncodedString()
-    }
-    
-    /// 计算WebSocket Accept密钥
-    /// - Parameter key: 客户端密钥
-    /// - Returns: 服务器应该返回的Accept密钥
-    public func computeWebSocketAccept(for key: String) -> String {
-        let combined = key + Self.magicString
-        let data = Data(combined.utf8)
-        
-        // 使用CryptoKit（iOS 13+）
-        #if canImport(CryptoKit)
-        if #available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *) {
-            let hash = Insecure.SHA1.hash(data: data)
-            return Data(hash).base64EncodedString()
-        }
-        #endif
-        
-        // 回退到CommonCrypto
-        return computeSHA1(data).base64EncodedString()
-    }
-    
     // MARK: - 私有方法
     
     /// 格式化Host头部
@@ -148,21 +114,7 @@ public struct RequestBuilder {
         }
     }
     
-    /// 使用CommonCrypto计算SHA1哈希
-    /// - Parameter data: 输入数据
-    /// - Returns: SHA1哈希结果
-    private func computeSHA1(_ data: Data) -> Data {
-        #if canImport(CommonCrypto)
-        var hash = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
-        data.withUnsafeBytes { bytes in
-            _ = CC_SHA1(bytes.bindMemory(to: UInt8.self).baseAddress, CC_LONG(data.count), &hash)
-        }
-        return Data(hash)
-        #else
-        // 如果CommonCrypto不可用，使用简单的替代实现
-        fatalError("SHA1计算需要CommonCrypto支持")
-        #endif
-    }
+
 }
 
 // MARK: - WebSocket请求验证

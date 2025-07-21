@@ -89,32 +89,7 @@ final class RequestBuilderTests: XCTestCase {
         XCTAssertTrue(request.contains("Authorization: Bearer token123"))
     }
     
-    /// 测试WebSocket密钥生成
-    func testWebSocketKeyGeneration() {
-        let key1 = requestBuilder.generateWebSocketKey()
-        let key2 = requestBuilder.generateWebSocketKey()
-        
-        // 密钥不应该相同
-        XCTAssertNotEqual(key1, key2)
-        
-        // 密钥应该是有效的Base64字符串，解码后长度为16字节
-        let keyData1 = Data(base64Encoded: key1)
-        let keyData2 = Data(base64Encoded: key2)
-        
-        XCTAssertNotNil(keyData1)
-        XCTAssertNotNil(keyData2)
-        XCTAssertEqual(keyData1?.count, 16)
-        XCTAssertEqual(keyData2?.count, 16)
-    }
-    
-    /// 测试WebSocket Accept密钥计算
-    func testWebSocketAcceptComputation() {
-        let testKey = "dGhlIHNhbXBsZSBub25jZQ=="
-        let expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        
-        let computedAccept = requestBuilder.computeWebSocketAccept(for: testKey)
-        XCTAssertEqual(computedAccept, expectedAccept)
-    }
+
     
     /// 测试请求验证 - 有效请求
     func testValidRequestValidation() {
@@ -164,10 +139,7 @@ final class RequestBuilderTests: XCTestCase {
         XCTAssertEqual(RequestBuilder.webSocketVersion, "13")
     }
     
-    /// 测试魔术字符串常量
-    func testMagicString() {
-        XCTAssertEqual(RequestBuilder.magicString, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-    }
+
     
     /// 测试复杂URL的处理
     func testComplexURLHandling() {
