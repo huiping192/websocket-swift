@@ -26,21 +26,3 @@ public enum WebSocketMessage {
     case ping(Data?)
     case pong(Data?)
 }
-
-/// WebSocket帧类型
-public enum FrameType: UInt8 {
-    case continuation = 0x0
-    case text = 0x1
-    case binary = 0x2
-    case close = 0x8
-    case ping = 0x9
-    case pong = 0xA
-}
-
-/// WebSocket客户端协议
-public protocol WebSocketClientProtocol {
-    func connect(to url: URL) async throws
-    func send(message: WebSocketMessage) async throws
-    func receive() async throws -> WebSocketMessage
-    func close() async throws
-}
