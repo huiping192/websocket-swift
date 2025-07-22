@@ -1,6 +1,6 @@
 import Foundation
 import Network
-import Security
+@preconcurrency import Security
 
 /// TLS配置选项
 public struct TLSConfiguration: Sendable {

@@ -114,7 +114,7 @@ public final class WebSocketClient: WebSocketClientProtocol {
         transport: NetworkTransportProtocol? = nil,
         configuration: Configuration = .default
     ) {
-        self.transport = transport ?? TCPTransport()
+        self.transport = transport ?? UnifiedNetworkTransport()
         self.configuration = configuration
         self.handshakeManager = HandshakeManager()
         self.frameEncoder = FrameEncoder()

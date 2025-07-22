@@ -32,7 +32,24 @@ public enum ConnectionState: Equatable {
     }
 }
 
-/// 网络传输协议
+/// 基础传输协议
+public protocol BaseTransportProtocol {
+    func disconnect() async
+    func send(data: Data) async throws
+    func receive() async throws -> Data
+}
+
+/// TCP传输协议
+public protocol TCPTransportProtocol: BaseTransportProtocol {
+    func connect(to host: String, port: Int) async throws
+}
+
+/// TLS传输协议  
+public protocol TLSTransportProtocol: BaseTransportProtocol {
+    func connect(to host: String, port: Int, tlsConfig: TLSConfiguration) async throws
+}
+
+/// 网络传输协议（向后兼容）
 public protocol NetworkTransportProtocol {
     func connect(to host: String, port: Int, useTLS: Bool, tlsConfig: TLSConfiguration) async throws
     func disconnect() async

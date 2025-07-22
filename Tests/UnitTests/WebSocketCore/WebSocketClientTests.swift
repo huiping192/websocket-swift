@@ -254,32 +254,31 @@ final class WebSocketClientTests: XCTestCase {
     
     func testWaitForConnection() async {
         mockTransport.simulateSuccessfulHandshake = true
+        mockTransport.keepAliveAfterHandshake = true
         
         let url = URL(string: "ws://example.com")!
         
-        // 在后台连接
-        Task {
+        // 并行启动连接和等待
+        async let connectTask: () = {
             try? await client.connect(to: url)
-        }
+        }()
         
-        // 等待连接建立
-        let success = await client.waitForConnection(timeout: 5.0)
+        async let waitTask = client.waitForConnection(timeout: 5.0)
+        
+        // 等待两个任务完成
+        await connectTask
+        let success = await waitTask
+        
         XCTAssertTrue(success, "应该在超时时间内连接成功")
     }
     
     func testWaitForConnectionTimeout() async {
-        // 不设置mock响应，模拟连接超时
-        
+        // 不设置任何成功标志，连接会失败
         let url = URL(string: "ws://example.com")!
         
-        // 在后台尝试连接（会失败）
-        Task {
-            try? await client.connect(to: url)
-        }
-        
-        // 等待连接（应该超时）
+        // 测试超时机制：直接等待连接，应该超时
         let success = await client.waitForConnection(timeout: 0.1)
-        XCTAssertFalse(success, "应该在超时时间内连接失败")
+        XCTAssertFalse(success, "没有连接时应该超时失败")
     }
     
     // MARK: - 辅助方法
@@ -329,8 +328,10 @@ class MockNetworkTransport: NetworkTransportProtocol {
     var shouldFailSend = false
     var shouldFailReceive = false
     var simulateSuccessfulHandshake = false
+    var keepAliveAfterHandshake = false
     
     private var receiveIndex = 0
+    private var handshakeCompleted = false
     
     func connect(to host: String, port: Int, useTLS: Bool, tlsConfig: TLSConfiguration) async throws {
         if shouldFailConnection {
@@ -346,6 +347,7 @@ class MockNetworkTransport: NetworkTransportProtocol {
         sentData.removeAll()
         receivedData.removeAll()
         receiveIndex = 0
+        handshakeCompleted = false
         print("Mock: 已断开连接")
     }
     
@@ -374,6 +376,7 @@ class MockNetworkTransport: NetworkTransportProtocol {
         // 如果启用了模拟成功握手，直接生成正确的响应
         if simulateSuccessfulHandshake {
             simulateSuccessfulHandshake = false
+            handshakeCompleted = true
             return createMockHandshakeResponse(for: getLastSentRequest())
         }
         
@@ -390,7 +393,14 @@ class MockNetworkTransport: NetworkTransportProtocol {
             return data
         }
         
-        // 否则模拟等待
+        // 如果握手已完成且启用了保持连接，持续等待而不是抛出错误
+        if handshakeCompleted && keepAliveAfterHandshake {
+            try await Task.sleep(nanoseconds: 1_000_000_000) // 1秒
+            // 继续等待，不抛出错误
+            return try await receive()
+        }
+        
+        // 否则模拟等待后抛出无数据错误
         try await Task.sleep(nanoseconds: 100_000_000) // 100ms
         throw MockError.noDataAvailable
     }

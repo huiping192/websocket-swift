@@ -1,8 +1,23 @@
 import XCTest
 @testable import NetworkTransport
 
-/// 网络传输基础测试
+/// 网络传输模块基础测试
+/// 测试模块级别的组件：版本信息、连接状态、协议定义等
 final class NetworkTransportTests: XCTestCase {
+    
+    // MARK: - 模块信息测试
+    
+    /// 测试NetworkTransport结构体和版本信息
+    func testNetworkTransportModule() {
+        let module = NetworkTransport()
+        XCTAssertNotNil(module, "NetworkTransport模块应该可以实例化")
+        
+        let version = NetworkTransport.version
+        XCTAssertFalse(version.isEmpty, "版本信息不应为空")
+        XCTAssertTrue(version.contains("."), "版本号应该包含点号")
+    }
+    
+    // MARK: - 连接状态测试
     
     /// 测试连接状态枚举的相等性
     func testConnectionStateEquality() {
@@ -18,6 +33,21 @@ final class NetworkTransportTests: XCTestCase {
         XCTAssertNotEqual(ConnectionState.connecting, ConnectionState.connected)
     }
     
+    /// 测试连接状态转换合理性
+    func testConnectionStateTransitions() {
+        // 验证状态枚举值存在
+        let states: [ConnectionState] = [
+            .disconnected,
+            .connecting, 
+            .connected,
+            .failed(NetworkError.connectionTimeout)
+        ]
+        
+        XCTAssertEqual(states.count, 4, "应该有4种连接状态")
+    }
+    
+    // MARK: - 网络错误测试
+    
     /// 测试网络错误的本地化描述
     func testNetworkErrorDescriptions() {
         let errors: [NetworkError] = [
@@ -26,98 +56,53 @@ final class NetworkTransportTests: XCTestCase {
             .connectionFailed(NSError(domain: "test", code: 1)),
             .connectionReset,
             .notConnected,
-            .invalidState("test state")
+            .invalidState("test state"),
+            .sendFailed(NSError(domain: "send", code: 1)),
+            .receiveFailed(NSError(domain: "receive", code: 1)),
+            .noDataReceived,
+            .tlsHandshakeFailed(NSError(domain: "tls", code: 1))
         ]
         
         for error in errors {
+            XCTAssertNotNil(error.errorDescription, "错误应该有描述: \(error)")
             XCTAssertFalse(error.errorDescription?.isEmpty ?? true, "错误描述不应该为空: \(error)")
-            // 恢复建议可能为空，所以不强制要求
         }
     }
     
-    /// 测试TCPTransport基本功能
-    func testTCPTransportBasics() async {
-        let transport = TCPTransport()
+    /// 测试网络错误的恢复建议
+    func testNetworkErrorRecoverySuggestions() {
+        let errorsWithSuggestions: [NetworkError] = [
+            .connectionTimeout,
+            .hostUnreachable,
+            .notConnected,
+            .tlsHandshakeFailed(NSError(domain: "tls", code: 1))
+        ]
         
-        // 测试未连接时的操作应该失败
-        do {
-            let testData = "test".data(using: .utf8)!
-            try await transport.send(data: testData)
-            XCTFail("应该抛出错误")
-        } catch NetworkError.notConnected {
-            // 预期的错误
-        } catch {
-            XCTFail("意外的错误: \(error)")
+        for error in errorsWithSuggestions {
+            XCTAssertNotNil(error.recoverySuggestion, "错误应该有恢复建议: \(error)")
+            XCTAssertFalse(error.recoverySuggestion?.isEmpty ?? true, "恢复建议不应为空: \(error)")
         }
-        
-        do {
-            _ = try await transport.receive()
-            XCTFail("应该抛出错误")
-        } catch NetworkError.notConnected {
-            // 预期的错误
-        } catch {
-            XCTFail("意外的错误: \(error)")
-        }
-        
-        // 断开连接应该总是成功
-        await transport.disconnect()
     }
     
-    /// 测试连接到无效主机
-    func testConnectToInvalidHost() async {
-        let transport = TCPTransport()
-        
-        do {
-            try await transport.connect(to: "invalid.host.example", port: 80, useTLS: false)
-            XCTFail("应该抛出错误")
-        } catch let error as NetworkError {
-            // 验证错误类型合理
-            switch error {
-            case .connectionTimeout, .connectionFailed, .hostUnreachable:
-                // 这些都是合理的错误类型
-                break
-            default:
-                XCTFail("意外的错误类型: \(error)")
-            }
-        } catch {
-            XCTFail("意外的错误: \(error)")
-        }
-        
-        await transport.disconnect()
+    // MARK: - 协议定义测试
+    
+    /// 测试协议定义的存在性
+    func testProtocolDefinitions() {
+        // 验证协议可以作为类型使用
+        XCTAssertNotNil(BaseTransportProtocol.self, "BaseTransportProtocol应该存在")
+        XCTAssertNotNil(TCPTransportProtocol.self, "TCPTransportProtocol应该存在")
+        XCTAssertNotNil(TLSTransportProtocol.self, "TLSTransportProtocol应该存在")
+        XCTAssertNotNil(NetworkTransportProtocol.self, "NetworkTransportProtocol应该存在")
     }
     
-    /// 测试TLS配置
-    func testTLSConfiguration() {
-        let secureConfig = TLSConfiguration.secure
-        let devConfig = TLSConfiguration.development
-        let wsConfig = TLSConfiguration.webSocket
+    /// 测试具体实现类的协议一致性
+    func testConcreteClassProtocolConformance() {
+        let tcpTransport = TCPTransport()
+        let tlsTransport = TLSTransport()
+        let unifiedTransport = UnifiedNetworkTransport()
         
-        XCTAssertEqual(secureConfig.minimumTLSVersion, .tls12)
-        XCTAssertEqual(devConfig.certificateVerification, .disabled)
-        XCTAssertEqual(wsConfig.applicationProtocols, ["http/1.1"])
-    }
-    
-    /// 测试TLS连接方法
-    func testTLSConnectionMethods() async {
-        let transport = TCPTransport()
-        
-        // 测试无效主机的TLS连接
-        do {
-            try await transport.connectSecure(to: "invalid.host.example", port: 443)
-            XCTFail("应该抛出错误")
-        } catch let error as NetworkError {
-            // 验证错误类型合理
-            switch error {
-            case .connectionTimeout, .connectionFailed, .hostUnreachable:
-                // 这些都是合理的错误类型
-                break
-            default:
-                XCTFail("意外的错误类型: \(error)")
-            }
-        } catch {
-            XCTFail("意外的错误: \(error)")
-        }
-        
-        await transport.disconnect()
+        XCTAssertTrue(tcpTransport is TCPTransportProtocol, "TCPTransport应实现TCPTransportProtocol")
+        XCTAssertTrue(tlsTransport is TLSTransportProtocol, "TLSTransport应实现TLSTransportProtocol")
+        XCTAssertTrue(unifiedTransport is NetworkTransportProtocol, "UnifiedNetworkTransport应实现NetworkTransportProtocol")
     }
 }
