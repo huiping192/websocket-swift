@@ -1,33 +1,34 @@
 import Foundation
 import Network
 
-/// TCP传输实现
-/// 使用Network.framework提供纯TCP连接功能，不包含TLS支持
-public final class TCPTransport: TCPTransportProtocol, @unchecked Sendable {
+/// TLS传输实现
+/// 使用Network.framework提供TLS加密连接功能，内部使用TCPTransport作为基础传输
+public final class TLSTransport: TLSTransportProtocol, @unchecked Sendable {
     
     // MARK: - 私有属性
     private var connection: NWConnection?
-    private let queue = DispatchQueue(label: "com.websocket.tcp.transport", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.websocket.tls.transport", qos: .userInitiated)
     private var connectionState: ConnectionState = .disconnected
     private let maxReceiveSize: Int = 65536
     private let connectionTimeout: TimeInterval
     
     // MARK: - 状态管理
-    private let stateQueue = DispatchQueue(label: "com.websocket.tcp.state", qos: .utility)
+    private let stateQueue = DispatchQueue(label: "com.websocket.tls.state", qos: .utility)
     
-    /// 初始化TCP传输
+    /// 初始化TLS传输
     /// - Parameter timeout: 连接超时时间（秒），默认30秒
     public init(timeout: TimeInterval = 30.0) {
         self.connectionTimeout = timeout
     }
     
-    // MARK: - TCPTransportProtocol实现
+    // MARK: - TLSTransportProtocol实现
     
-    /// 连接到指定主机和端口（纯TCP连接）
+    /// 连接到指定主机和端口（使用TLS加密）
     /// - Parameters:
     ///   - host: 主机名或IP地址
     ///   - port: 端口号
-    public func connect(to host: String, port: Int) async throws {
+    ///   - tlsConfig: TLS配置选项
+    public func connect(to host: String, port: Int, tlsConfig: TLSConfiguration = .secure) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             stateQueue.async { [weak self] in
                 guard let self = self else {
@@ -41,8 +42,8 @@ public final class TCPTransport: TCPTransportProtocol, @unchecked Sendable {
                     return
                 }
                 
-                // 设置TCP连接参数
-                let parameters = self.createTCPParameters()
+                // 设置TLS连接参数
+                let parameters = self.createTLSParameters(tlsConfig: tlsConfig)
                 
                 // 创建连接
                 let endpoint = NWEndpoint.hostPort(
@@ -153,17 +154,18 @@ public final class TCPTransport: TCPTransportProtocol, @unchecked Sendable {
     
     // MARK: - 私有方法
     
-    /// 创建TCP连接参数
-    private func createTCPParameters() -> NWParameters {
-        // 纯TCP配置
-        let parameters = NWParameters.tcp
+    /// 创建TLS连接参数
+    private func createTLSParameters(tlsConfig: TLSConfiguration) -> NWParameters {
+        // TLS配置
+        let tlsOptions = NWProtocolTLS.Options.from(tlsConfig)
+        let parameters = NWParameters(tls: tlsOptions, tcp: .init())
         
         // 优化网络性能
         parameters.serviceClass = .responsiveData
         parameters.preferNoProxies = true
         parameters.multipathServiceType = .disabled
         
-        // 禁用Nagle算法以降低延迟
+        // 配置TCP选项
         if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
             tcpOptions.noDelay = true
             tcpOptions.enableKeepalive = true
@@ -188,24 +190,28 @@ public final class TCPTransport: TCPTransportProtocol, @unchecked Sendable {
                 }
                 
             case .failed(let error):
+                let networkError: NetworkError
+                if (error as NSError).code == -9836 {
+                    networkError = NetworkError.tlsHandshakeFailed(error)
+                } else {
+                    networkError = NetworkError.connectionFailed(error)
+                }
+                
+                self.connectionState = .failed(networkError)
                 if self.connectionState == .connecting {
-                    let networkError = NetworkError.connectionFailed(error)
-                    self.connectionState = .failed(networkError)
                     continuation.resume(throwing: networkError)
                 }
                 
             case .cancelled:
+                self.connectionState = .disconnected
                 if self.connectionState == .connecting {
-                    self.connectionState = .disconnected
                     continuation.resume(throwing: NetworkError.connectionCancelled)
                 }
                 
             case .waiting(let error):
-                print("Connection waiting: \(error)")
-                // 继续等待，不改变状态
+                print("TLS Connection waiting: \(error)")
                 
             case .preparing, .setup:
-                // 准备阶段，保持connecting状态
                 break
                 
             @unknown default:
@@ -215,63 +221,29 @@ public final class TCPTransport: TCPTransportProtocol, @unchecked Sendable {
     }
 }
 
-// MARK: - 网络错误定义
+// MARK: - 便利方法
 
-/// 网络传输错误
-public enum NetworkError: Error, LocalizedError {
-    case connectionTimeout
-    case hostUnreachable
-    case connectionFailed(Error)
-    case connectionReset
-    case connectionCancelled
-    case invalidState(String)
-    case notConnected
-    case sendFailed(Error)
-    case receiveFailed(Error)
-    case noDataReceived
-    case tlsHandshakeFailed(Error)
+extension TLSTransport {
     
-    public var errorDescription: String? {
-        switch self {
-        case .connectionTimeout:
-            return "连接超时"
-        case .hostUnreachable:
-            return "主机不可达"
-        case .connectionFailed(let error):
-            return "连接失败: \(error.localizedDescription)"
-        case .connectionReset:
-            return "连接被重置"
-        case .connectionCancelled:
-            return "连接被取消"
-        case .invalidState(let message):
-            return "无效状态: \(message)"
-        case .notConnected:
-            return "未连接"
-        case .sendFailed(let error):
-            return "发送失败: \(error.localizedDescription)"
-        case .receiveFailed(let error):
-            return "接收失败: \(error.localizedDescription)"
-        case .noDataReceived:
-            return "未接收到数据"
-        case .tlsHandshakeFailed(let error):
-            return "TLS握手失败: \(error.localizedDescription)"
-        }
+    /// 连接到HTTPS服务器（使用标准443端口）
+    /// - Parameter host: 主机名
+    public func connectHTTPS(to host: String) async throws {
+        try await connect(to: host, port: 443, tlsConfig: .webSocket)
     }
     
-    public var recoverySuggestion: String? {
-        switch self {
-        case .connectionTimeout:
-            return "请检查网络连接，确认服务器地址正确"
-        case .hostUnreachable:
-            return "请检查主机名或IP地址是否正确"
-        case .connectionFailed, .connectionReset:
-            return "请稍后重试，或检查网络连接"
-        case .notConnected:
-            return "请先建立连接"
-        case .tlsHandshakeFailed:
-            return "请检查TLS配置或证书"
-        default:
-            return "请重试或联系技术支持"
-        }
+    /// 连接到WSS服务器（WebSocket over TLS）
+    /// - Parameters:
+    ///   - host: 主机名
+    ///   - port: 端口号，默认443
+    public func connectWSS(to host: String, port: Int = 443) async throws {
+        try await connect(to: host, port: port, tlsConfig: .webSocket)
+    }
+    
+    /// 连接到服务器（开发环境，跳过证书验证）
+    /// - Parameters:
+    ///   - host: 主机名
+    ///   - port: 端口号
+    public func connectDevelopment(to host: String, port: Int) async throws {
+        try await connect(to: host, port: port, tlsConfig: .development)
     }
 }
