@@ -249,9 +249,11 @@ final class FrameDecoderTests: XCTestCase {
             )
             
             let encoded = try encoder.encodeFrame(frame)
+            print("DEBUG: Encoded \(opcode) frame: \(encoded.map { String(format: "%02X", $0) }.joined(separator: " "))")
             let decoded = try freshDecoder.decode(data: encoded)
+            print("DEBUG: Decoded frames count: \(decoded.count)")
             
-            XCTAssertEqual(decoded.count, 1)
+            XCTAssertEqual(decoded.count, 1, "Failed to decode \(opcode) control frame")
             let decodedFrame = decoded[0]
             
             XCTAssertEqual(decodedFrame.opcode, opcode)

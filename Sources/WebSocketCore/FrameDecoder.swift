@@ -25,6 +25,7 @@ public final class FrameDecoder {
     /// 最大帧大小
     private let maxFrameSize: UInt64
     
+    
     /// 初始化解码器
     /// - Parameter maxFrameSize: 最大允许的帧大小
     public init(maxFrameSize: UInt64 = defaultMaxFrameSize) {
@@ -37,12 +38,16 @@ public final class FrameDecoder {
     /// - Throws: WebSocketProtocolError
     public func decode(data: Data) throws -> [WebSocketFrame] {
         buffer.append(data)
+        
         var frames: [WebSocketFrame] = []
         
-        // 逐个解析帧，使用更安全的方式
-        while true {
+        // 逐个解析帧
+        frameProcessingLoop: while true {
+            
             // 检查是否有足够数据解析下一个帧
-            guard !buffer.isEmpty else { break }
+            guard !buffer.isEmpty else { 
+                break frameProcessingLoop
+            }
             
             let originalBufferCount = buffer.count
             let result = try processBuffer()
@@ -61,7 +66,11 @@ public final class FrameDecoder {
                 
             case .needMoreData:
                 // 没有足够数据解析下一个完整帧，停止处理
-                break
+                break frameProcessingLoop
+                
+            case .continueProcessing:
+                // 状态已更新，继续下一轮处理
+                continue frameProcessingLoop
             }
         }
         
@@ -80,10 +89,12 @@ public final class FrameDecoder {
     private enum ProcessResult {
         case frame(WebSocketFrame)
         case needMoreData
+        case continueProcessing
     }
     
     /// 处理缓冲区数据
     private func processBuffer() throws -> ProcessResult {
+        
         switch state {
         case .waitingForHeader:
             return try processHeader()
@@ -102,8 +113,9 @@ public final class FrameDecoder {
             return .needMoreData
         }
         
-        let firstByte = buffer[0]
-        let secondByte = buffer[1]
+        // 使用安全的下标访问
+        let firstByte = buffer[buffer.startIndex]
+        let secondByte = buffer[buffer.startIndex.advanced(by: 1)]
         
         // 解析基本头部信息
         let fin = (firstByte & 0x80) != 0
@@ -160,7 +172,7 @@ public final class FrameDecoder {
             buffer.removeFirst(2)
         }
         
-        return try processBuffer()
+        return .continueProcessing
     }
     
     /// 处理扩展长度
@@ -214,7 +226,7 @@ public final class FrameDecoder {
             }
         }
         
-        return try processBuffer()
+        return .continueProcessing
     }
     
     /// 处理掩码密钥
@@ -229,14 +241,30 @@ public final class FrameDecoder {
         }
         
         buffer.removeFirst(4)
+      
+      if payloadLength == 0 {
+        let frame = try WebSocketFrame(
+          fin: header.fin,
+          rsv1: header.rsv1,
+          rsv2: header.rsv2,
+          rsv3: header.rsv3,
+          opcode: header.opcode,
+          masked: header.masked,
+          payload: Data(),
+          maskingKey: maskingKey
+        )
+        return .frame(frame)
+      }
         state = .waitingForPayload(header: header, payloadLength: payloadLength, maskingKey: maskingKey)
         
-        return try processBuffer()
+        return .continueProcessing
     }
     
     /// 处理负载数据
     private func processPayload(header: FrameHeaderData, payloadLength: UInt64, maskingKey: UInt32?) throws -> ProcessResult {
-        guard buffer.count >= payloadLength else {
+        // 安全地进行类型转换和比较
+        guard payloadLength <= UInt64(Int.max),
+              buffer.count >= Int(payloadLength) else {
             return .needMoreData
         }
         
