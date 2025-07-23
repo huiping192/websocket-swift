@@ -6,10 +6,10 @@ import PackageDescription
 let package = Package(
     name: "SwiftWebSocketLearning",
     platforms: [
-        .macOS(.v12),
-        .iOS(.v15),
-        .watchOS(.v8),
-        .tvOS(.v15)
+        .macOS(.v13),
+        .iOS(.v16),
+        .watchOS(.v9),
+        .tvOS(.v16)
     ],
     products: [
         // WebSocket核心库
@@ -67,7 +67,8 @@ let package = Package(
         .executableTarget(
             name: "WebSocketDemo",
             dependencies: ["WebSocketCore", "NetworkTransport", "HTTPUpgrade", "Utilities"],
-            path: "Examples/WebSocketDemo-macOS"
+            path: "Examples/WebSocketDemo-macOS",
+            exclude: ["Info.plist", "README.md"]
         ),
         
         // MARK: - 测试

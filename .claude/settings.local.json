@@ -8,7 +8,10 @@
       "Bash(swift test)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(swift test:*)"
+      "Bash(swift test:*)",
+      "Bash(rm:*)",
+      "Bash(swift:*)",
+      "Bash(chmod:*)"
     ],
     "deny": []
   }
