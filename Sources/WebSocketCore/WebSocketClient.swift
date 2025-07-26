@@ -243,7 +243,6 @@ public final class WebSocketClient: WebSocketClientProtocol {
                 
                 // 等待重连完成或失败
                 if let reconnectManager = reconnectManager {
-                    var attempts = 0
                     let maxWaitTime = configuration.reconnectTimeout
                     let startTime = Date()
                     
@@ -392,43 +391,61 @@ public final class WebSocketClient: WebSocketClientProtocol {
     public func close(code: UInt16, reason: String = "") async throws {
         let currentState = await stateManager.currentState
         
-        // 如果已经关闭，直接返回
-        if currentState == .closed {
+        // 如果已经关闭或正在关闭，直接返回
+        if currentState == .closed || currentState == .closing {
+            print("ℹ️ 连接已处于关闭状态: \(currentState)")
             return
         }
+        
+        print("🔌 开始关闭WebSocket连接...")
         
         // 停止重连管理器（用户主动关闭不应触发重连）
         await reconnectManager?.stopReconnect()
         await reconnectManager?.setReconnectEnabled(false)
         
         // 验证关闭状态码
-        try validateCloseCode(code)
+        do {
+            try validateCloseCode(code)
+        } catch {
+            print("⚠️ 关闭状态码验证失败: \(error)")
+            // 即使状态码无效，仍继续关闭流程
+        }
         
         // 更新状态为关闭中
         await stateManager.updateState(.closing)
         
-        do {
-            // 发送关闭帧
-            try await sendCloseFrame(code: code, reason: reason)
-            
-            // 等待服务器关闭帧响应或超时
-            let gracefulClose = await waitForServerCloseResponse(timeout: 3.0)
-            
-            if gracefulClose {
-                print("✅ 优雅关闭完成")
-            } else {
-                print("⚠️ 服务器未响应关闭帧，强制关闭")
+        // 尝试发送关闭帧
+        var closeFrameSent = false
+        if await stateManager.canSendMessages || currentState == .open {
+            do {
+                try await sendCloseFrame(code: code, reason: reason)
+                closeFrameSent = true
+                
+                // 等待服务器关闭帧响应或超时
+                let gracefulClose = await waitForServerCloseResponse(timeout: 3.0)
+                
+                if gracefulClose {
+                    print("✅ 优雅关闭完成")
+                } else {
+                    print("⚠️ 服务器未响应关闭帧，强制关闭")
+                }
+                
+            } catch {
+                print("⚠️ 发送关闭帧失败: \(error)")
             }
-            
-        } catch {
-            print("⚠️ 发送关闭帧失败: \(error)")
+        } else {
+            print("ℹ️ 连接状态不允许发送关闭帧，直接清理")
         }
         
         // 无论如何都要清理连接
         await cleanup()
         await stateManager.updateState(.closed)
         
-        print("✅ WebSocket连接已关闭")
+        if closeFrameSent {
+            print("✅ WebSocket连接已优雅关闭")
+        } else {
+            print("✅ WebSocket连接已强制关闭")
+        }
     }
     
     // MARK: - 状态查询
@@ -522,6 +539,8 @@ public final class WebSocketClient: WebSocketClientProtocol {
     
     /// 运行接收循环
     private func runReceiveLoop() async {
+        print("🔄 接收循环已启动")
+        
         while await stateManager.canReceiveMessages {
             do {
                 // 接收网络数据
@@ -536,11 +555,26 @@ public final class WebSocketClient: WebSocketClientProtocol {
                 }
                 
             } catch {
+                let currentState = await stateManager.currentState
+                
+                // 检查是否是由于连接正常关闭导致的错误
+                if currentState == .closing || currentState == .closed {
+                    print("ℹ️ 连接正在关闭，接收循环正常退出")
+                    break
+                }
+                
                 print("❌ 接收数据失败: \(error)")
                 
-                // 网络错误，关闭连接
-                await stateManager.updateState(.closed)
+                // 检查是否是取消错误（任务被取消）
+                if error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
+                    print("ℹ️ 接收任务已被取消")
+                    break
+                }
+                
+                // 网络错误，优雅关闭连接
+                await stateManager.updateState(.closing)
                 await cleanup()
+                await stateManager.updateState(.closed)
                 break
             }
         }
@@ -550,6 +584,8 @@ public final class WebSocketClient: WebSocketClientProtocol {
     
     /// 运行发送循环  
     private func runSendLoop() async {
+        print("🔄 发送循环已启动")
+        
         while await stateManager.canSendMessages {
             do {
                 // 从队列获取消息
@@ -566,12 +602,27 @@ public final class WebSocketClient: WebSocketClientProtocol {
                 print("📤 已发送消息: \(message)")
                 
             } catch {
+                let currentState = await stateManager.currentState
+                
+                // 检查是否是由于连接正常关闭导致的错误
+                if currentState == .closing || currentState == .closed {
+                    print("ℹ️ 连接正在关闭，发送循环正常退出")
+                    break
+                }
+                
                 print("❌ 发送消息失败: \(error)")
+                
+                // 检查是否是取消错误（任务被取消）
+                if error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
+                    print("ℹ️ 发送任务已被取消")
+                    break
+                }
                 
                 // 发送错误，根据错误类型决定是否关闭连接
                 if error is NetworkError {
-                    await stateManager.updateState(.closed)
+                    await stateManager.updateState(.closing)
                     await cleanup()
+                    await stateManager.updateState(.closed)
                     break
                 }
             }
@@ -652,13 +703,26 @@ public final class WebSocketClient: WebSocketClientProtocol {
         }
     }
     
-    /// 清理资源
+    /// 清理状态标志，防止重复清理
+    private var isCleaningUp = false
+    
+    /// 清理资源（线程安全，防止重复清理）
     private func cleanup() async {
+        // 防止重复清理
+        guard !isCleaningUp else {
+            print("⚠️ 清理已在进行中，跳过重复清理")
+            return
+        }
+        
+        isCleaningUp = true
+        defer { isCleaningUp = false }
+        
+        print("🧹 开始清理资源...")
+        
         // 停止心跳管理器
         if let heartbeatManager = heartbeatManager {
-            Task {
-                await heartbeatManager.stopHeartbeat()
-            }
+            await heartbeatManager.stopHeartbeat()
+            print("✅ 心跳管理器已停止")
         }
         
         // 取消后台任务
@@ -666,16 +730,20 @@ public final class WebSocketClient: WebSocketClientProtocol {
         sendTask?.cancel()
         receiveTask = nil
         sendTask = nil
+        print("✅ 后台任务已取消")
         
         // 清空消息队列
         await messageQueue.clear()
+        print("✅ 消息队列已清空")
         
         // 重置解码器和组装器状态
         frameDecoder.reset()
         messageAssembler.reset()
+        print("✅ 解码器和组装器已重置")
         
         // 断开网络连接
         await transport.disconnect()
+        print("✅ 网络连接已断开")
         
         // 清理连接信息
         currentURL = nil
@@ -698,7 +766,7 @@ public final class WebSocketClient: WebSocketClientProtocol {
         await stateManager.updateState(.closed)
         
         // 如果启用了自动重连，尝试重连
-        if configuration.enableAutoReconnect, let url = currentURL {
+        if configuration.enableAutoReconnect, currentURL != nil {
             print("🔄 心跳超时触发自动重连")
             let timeoutError = WebSocketClientError.connectionTimeout("心跳超时")
             await reconnectManager?.startReconnect(after: timeoutError)
@@ -818,9 +886,9 @@ public final class WebSocketClient: WebSocketClientProtocol {
             }
         }
         
-        // 启动清理流程
-        await cleanup()
+        // 只更新状态为已关闭，不执行清理（清理由主关闭流程处理）
         await stateManager.updateState(.closed)
+        print("✅ 服务器关闭帧已处理")
     }
 }
 

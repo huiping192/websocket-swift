@@ -5,6 +5,7 @@ enum ConnectionState: Equatable {
     case disconnected
     case connecting
     case connected
+    case disconnecting
     case reconnecting
     case failed(Error)
     
@@ -13,6 +14,7 @@ enum ConnectionState: Equatable {
         case (.disconnected, .disconnected),
              (.connecting, .connecting),
              (.connected, .connected),
+             (.disconnecting, .disconnecting),
              (.reconnecting, .reconnecting):
             return true
         case (.failed, .failed):
@@ -30,6 +32,8 @@ enum ConnectionState: Equatable {
             return "连接中..."
         case .connected:
             return "已连接"
+        case .disconnecting:
+            return "断开中..."
         case .reconnecting:
             return "重连中..."
         case .failed:

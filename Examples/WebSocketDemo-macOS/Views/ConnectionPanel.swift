@@ -144,6 +144,8 @@ struct ConnectionPanel: View {
             return .orange
         case .connected:
             return .green
+        case .disconnecting:
+            return .yellow
         case .failed:
             return .red
         }

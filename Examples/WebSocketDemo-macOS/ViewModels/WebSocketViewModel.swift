@@ -72,7 +72,13 @@ class WebSocketViewModel: ObservableObject {
     }
     
     func disconnect() {
-        addLog("断开连接", level: .info)
+        guard connectionState.isConnected || connectionState == .connecting else {
+            addLog("当前未连接，无需断开", level: .debug)
+            return
+        }
+        
+        addLog("开始断开连接...", level: .info)
+        connectionState = .disconnecting
         
         // 取消任务
         connectionTask?.cancel()
@@ -80,7 +86,22 @@ class WebSocketViewModel: ObservableObject {
         
         // 关闭连接
         Task {
-            try? await webSocketClient?.close()
+            do {
+                if let client = webSocketClient {
+                    try await client.close()
+                    await MainActor.run {
+                        self.addLog("WebSocket连接已优雅关闭", level: .info)
+                    }
+                }
+            } catch {
+                // 忽略取消错误和关闭过程中的正常错误
+                if !(error is CancellationError) && (error as NSError).code != NSURLErrorCancelled {
+                    await MainActor.run {
+                        self.addLog("关闭连接时出错: \(error.localizedDescription)", level: .warning)
+                    }
+                }
+            }
+            
             await MainActor.run {
                 self.connectionState = .disconnected
                 self.webSocketClient = nil
@@ -143,10 +164,18 @@ class WebSocketViewModel: ObservableObject {
                         self.handleReceivedMessage(message)
                     }
                 } catch {
-                    // 检查是否是因为连接关闭导致的错误
-                    if connectionState.isConnected {
+                    // 检查是否是取消错误或连接关闭导致的错误
+                    if error is CancellationError || (error as NSError).code == NSURLErrorCancelled {
+                        await MainActor.run {
+                            self.addLog("接收任务已取消", level: .debug)
+                        }
+                    } else if connectionState.isConnected {
                         await MainActor.run {
                             self.addLog("接收消息错误: \(error.localizedDescription)", level: .error)
+                        }
+                    } else {
+                        await MainActor.run {
+                            self.addLog("连接已关闭，接收循环正常退出", level: .debug)
                         }
                     }
                     break
