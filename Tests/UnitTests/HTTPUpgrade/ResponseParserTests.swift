@@ -250,18 +250,114 @@ final class ResponseParserTests: XCTestCase {
         XCTAssertEqual(result.response?.statusCode, 101)
     }
     
-    /// 测试从无效数据解析响应
-    func testParseResponseFromInvalidData() {
-        // 创建无效的UTF-8数据
-        let invalidData = Data([0xFF, 0xFE, 0xFD])
+    /// 测试从ASCII编码数据解析响应
+    func testParseResponseFromASCIIData() {
+        let responseString = """
+        HTTP/1.1 101 Switching Protocols\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r
+        \r
+
+        """
+        
+        let data = responseString.data(using: .ascii)!
+        let result = responseParser.parseResponse(from: data)
+        
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(result.response?.statusCode, 101)
+        XCTAssertEqual(result.response?.headers["Upgrade"], "websocket")
+    }
+    
+    /// 测试从ISO Latin 1编码数据解析响应
+    func testParseResponseFromISOLatin1Data() {
+        let responseString = """
+        HTTP/1.1 101 Switching Protocols\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Server: Apache/2.4.41\r
+        \r
+
+        """
+        
+        let data = responseString.data(using: .isoLatin1)!
+        let result = responseParser.parseResponse(from: data)
+        
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(result.response?.statusCode, 101)
+        XCTAssertEqual(result.response?.headers["Server"], "Apache/2.4.41")
+    }
+    
+    /// 测试从混合编码数据解析响应（UTF-8失败但ASCII成功）
+    func testParseResponseFromMixedEncodingData() {
+        // 创建一个ASCII HTTP响应，但包含一些高位字节
+        var data = Data()
+        let asciiPart = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        data.append(asciiPart.data(using: .ascii)!)
+        // 添加一些非UTF-8字节但在ISO Latin 1中有效
+        data.append(contentsOf: [0xE9]) // é in ISO Latin 1
+        let endPart = "\r\n\r\n"
+        data.append(endPart.data(using: .ascii)!)
+        
+        let result = responseParser.parseResponse(from: data)
+        
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(result.response?.statusCode, 101)
+    }
+    
+    /// 测试从完全无效数据解析响应
+    func testParseResponseFromCompletelyInvalidData() {
+        // 创建完全无法解码的数据
+        let invalidData = Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD, 0xFC])
         let result = responseParser.parseResponse(from: invalidData)
         
+        // 数据能够被解码（通过lossy转换），但由于不是有效的HTTP响应格式，状态行解析应该失败
         XCTAssertFalse(result.isSuccess)
-        if case .failure(.invalidFormat(let reason)) = result {
-            XCTAssertTrue(reason.contains("无法解码为UTF-8字符串"))
-        } else {
-            XCTFail("应该返回格式错误")
-        }
+        XCTAssertEqual(result.error, .invalidStatusLine)
+    }
+    
+    /// 测试UTF-8编码优先级
+    func testUTF8EncodingPriority() {
+        let responseString = """
+        HTTP/1.1 101 Switching Protocols\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Content-Language: zh-CN\r
+        \r
+
+        """
+        
+        let utf8Data = responseString.data(using: .utf8)!
+        let result = responseParser.parseResponse(from: utf8Data)
+        
+        XCTAssertTrue(result.isSuccess)
+        XCTAssertEqual(result.response?.statusCode, 101)
+        XCTAssertEqual(result.response?.headers["Content-Language"], "zh-CN")
+    }
+    
+    /// 测试多编码解析成功的握手验证
+    func testMultiEncodingHandshakeValidation() {
+        let clientKey = "dGhlIHNhbXBsZSBub25jZQ=="
+        let expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        
+        let responseString = """
+        HTTP/1.1 101 Switching Protocols\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Sec-WebSocket-Accept: \(expectedAccept)\r
+        \r
+
+        """
+        
+        // 测试ASCII编码的完整验证
+        let asciiData = responseString.data(using: .ascii)!
+        let asciiResult = responseParser.validateHandshakeResponse(from: asciiData, clientKey: clientKey)
+        XCTAssertTrue(asciiResult.isValid)
+        
+        // 测试ISO Latin 1编码的完整验证
+        let latin1Data = responseString.data(using: .isoLatin1)!
+        let latin1Result = responseParser.validateHandshakeResponse(from: latin1Data, clientKey: clientKey)
+        XCTAssertTrue(latin1Result.isValid)
     }
     
     /// 测试完整握手响应验证

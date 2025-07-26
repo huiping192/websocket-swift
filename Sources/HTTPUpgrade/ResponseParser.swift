@@ -268,11 +268,32 @@ extension ResponseParser {
     /// - Parameter data: 响应数据
     /// - Returns: 解析结果
     public func parseResponse(from data: Data) -> ParseResult {
-        guard let responseString = String(data: data, encoding: .utf8) else {
-            return .failure(.invalidFormat("无法解码为UTF-8字符串"))
+        // 尝试多种编码方式解析HTTP响应
+        var responseString: String?
+        
+        // 首先尝试UTF-8编码
+        if let utf8String = String(data: data, encoding: .utf8) {
+            responseString = utf8String
+        }
+        // 如果UTF-8失败，尝试ASCII编码（HTTP响应头通常是ASCII）
+        else if let asciiString = String(data: data, encoding: .ascii) {
+            responseString = asciiString
+        }
+        // 如果ASCII也失败，尝试ISO Latin 1（HTTP/1.1默认编码）
+        else if let latin1String = String(data: data, encoding: .isoLatin1) {
+            responseString = latin1String
+        }
+        // 最后尝试lossy UTF-8转换，允许替换无效字符
+        else {
+            responseString = String(data: data, encoding: .utf8) ?? 
+                            String(decoding: data, as: UTF8.self)
         }
         
-        return parseResponse(responseString)
+        guard let finalString = responseString else {
+            return .failure(.invalidFormat("无法解码响应数据"))
+        }
+        
+        return parseResponse(finalString)
     }
     
     /// 完整的握手响应验证
