@@ -32,6 +32,9 @@ public final class WebSocketClient: WebSocketClientProtocol {
     /// 心跳管理器
     private var heartbeatManager: HeartbeatManager?
     
+    /// 重连管理器
+    private var reconnectManager: WebSocketReconnectManager?
+    
     // MARK: - 配置参数
     
     /// WebSocket配置
@@ -62,6 +65,12 @@ public final class WebSocketClient: WebSocketClientProtocol {
         public let heartbeatTimeout: TimeInterval
         public let enableHeartbeat: Bool
         
+        /// 重连配置
+        public let enableAutoReconnect: Bool
+        public let reconnectStrategy: WebSocketReconnectStrategy
+        public let maxReconnectAttempts: Int
+        public let reconnectTimeout: TimeInterval
+        
         /// 默认配置
         public static let `default` = Configuration(
             connectTimeout: 10.0,
@@ -73,7 +82,11 @@ public final class WebSocketClient: WebSocketClientProtocol {
             additionalHeaders: [:],
             heartbeatInterval: 30.0,
             heartbeatTimeout: 10.0,
-            enableHeartbeat: true
+            enableHeartbeat: true,
+            enableAutoReconnect: true,
+            reconnectStrategy: ExponentialBackoffReconnectStrategy(),
+            maxReconnectAttempts: 5,
+            reconnectTimeout: 30.0
         )
         
         public init(
@@ -86,7 +99,11 @@ public final class WebSocketClient: WebSocketClientProtocol {
             additionalHeaders: [String: String] = [:],
             heartbeatInterval: TimeInterval = 30.0,
             heartbeatTimeout: TimeInterval = 10.0,
-            enableHeartbeat: Bool = true
+            enableHeartbeat: Bool = true,
+            enableAutoReconnect: Bool = true,
+            reconnectStrategy: WebSocketReconnectStrategy = ExponentialBackoffReconnectStrategy(),
+            maxReconnectAttempts: Int = 5,
+            reconnectTimeout: TimeInterval = 30.0
         ) {
             self.connectTimeout = connectTimeout
             self.maxFrameSize = maxFrameSize
@@ -98,6 +115,10 @@ public final class WebSocketClient: WebSocketClientProtocol {
             self.heartbeatInterval = heartbeatInterval
             self.heartbeatTimeout = heartbeatTimeout
             self.enableHeartbeat = enableHeartbeat
+            self.enableAutoReconnect = enableAutoReconnect
+            self.reconnectStrategy = reconnectStrategy
+            self.maxReconnectAttempts = maxReconnectAttempts
+            self.reconnectTimeout = reconnectTimeout
         }
     }
     
@@ -162,6 +183,30 @@ public final class WebSocketClient: WebSocketClientProtocol {
                 }
             }
         }
+        
+        // 创建重连管理器
+        if configuration.enableAutoReconnect {
+            self.reconnectManager = WebSocketReconnectManager(strategy: configuration.reconnectStrategy)
+            
+            // 设置连接回调
+            Task {
+                await self.reconnectManager?.setConnectAction { [weak self] in
+                    guard let self = self, let url = self.currentURL else {
+                        throw WebSocketClientError.invalidState("没有可重连的URL")
+                    }
+                    
+                    // 执行重连
+                    try await self.performConnection(to: url)
+                }
+                
+                // 设置重连事件回调
+                await self.reconnectManager?.addEventHandler { [weak self] event in
+                    Task {
+                        await self?.handleReconnectEvent(event)
+                    }
+                }
+            }
+        }
     }
     
     // MARK: - WebSocketClientProtocol实现
@@ -181,6 +226,57 @@ public final class WebSocketClient: WebSocketClientProtocol {
             throw WebSocketClientError.invalidState("当前状态不允许连接：\(currentState)")
         }
         
+        // 保存URL用于重连
+        self.currentURL = url
+        
+        do {
+            // 尝试连接
+            try await performConnection(to: url)
+            
+            // 连接成功，重置重连管理器
+            await reconnectManager?.setReconnectEnabled(true)
+            
+        } catch {
+            // 连接失败，检查是否需要重连
+            if configuration.enableAutoReconnect {
+                await reconnectManager?.startReconnect(after: error)
+                
+                // 等待重连完成或失败
+                if let reconnectManager = reconnectManager {
+                    var attempts = 0
+                    let maxWaitTime = configuration.reconnectTimeout
+                    let startTime = Date()
+                    
+                    while Date().timeIntervalSince(startTime) < maxWaitTime {
+                        let state = await reconnectManager.currentState
+                        
+                        switch state {
+                        case .idle:
+                            // 重连成功
+                            return
+                        case .stopped:
+                            // 重连失败
+                            throw error
+                        case .reconnecting, .waiting:
+                            // 继续等待
+                            try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                            continue
+                        }
+                    }
+                    
+                    // 超时，停止重连
+                    await reconnectManager.stopReconnect()
+                    throw WebSocketClientError.connectionTimeout("重连超时")
+                }
+            }
+            
+            throw error
+        }
+    }
+    
+    /// 执行实际的连接操作（内部方法，用于初始连接和重连）
+    /// - Parameter url: WebSocket URL
+    private func performConnection(to url: URL) async throws {
         // 更新状态为连接中
         await stateManager.updateState(.connecting)
         
@@ -216,7 +312,6 @@ public final class WebSocketClient: WebSocketClientProtocol {
             }
             
             // 4. 保存连接信息
-            self.currentURL = url
             self.handshakeResult = handshakeResult
             
             // 5. 启动后台任务
@@ -302,6 +397,10 @@ public final class WebSocketClient: WebSocketClientProtocol {
             return
         }
         
+        // 停止重连管理器（用户主动关闭不应触发重连）
+        await reconnectManager?.stopReconnect()
+        await reconnectManager?.setReconnectEnabled(false)
+        
         // 验证关闭状态码
         try validateCloseCode(code)
         
@@ -356,6 +455,54 @@ public final class WebSocketClient: WebSocketClientProtocol {
     /// 获取协商的扩展
     public var negotiatedExtensions: [String] {
         handshakeResult?.negotiatedExtensions ?? []
+    }
+    
+    // MARK: - 重连管理
+    
+    /// 获取重连统计信息
+    /// - Returns: 重连统计信息，如果未启用重连则返回nil
+    public func getReconnectStatistics() async -> WebSocketReconnectManager.ReconnectStatistics? {
+        return await reconnectManager?.getStatistics()
+    }
+    
+    /// 获取重连历史记录
+    /// - Returns: 重连历史记录
+    public func getReconnectHistory() async -> [ReconnectRecord] {
+        return await reconnectManager?.getReconnectHistory() ?? []
+    }
+    
+    /// 手动触发重连
+    /// - Returns: 重连是否成功
+    @discardableResult
+    public func reconnectManually() async -> Bool {
+        guard configuration.enableAutoReconnect else {
+            print("⚠️ 自动重连未启用，无法手动重连")
+            return false
+        }
+        
+        return await reconnectManager?.reconnectImmediately() ?? false
+    }
+    
+    /// 设置重连启用状态
+    /// - Parameter enabled: 是否启用重连
+    public func setReconnectEnabled(_ enabled: Bool) async {
+        await reconnectManager?.setReconnectEnabled(enabled)
+    }
+    
+    /// 添加重连事件处理器
+    /// - Parameter handler: 事件处理回调
+    public func addReconnectEventHandler(_ handler: @escaping (WebSocketReconnectEvent) -> Void) async {
+        await reconnectManager?.addEventHandler(handler)
+    }
+    
+    /// 停止所有重连活动
+    public func stopReconnect() async {
+        await reconnectManager?.stopReconnect()
+    }
+    
+    /// 重置重连统计信息
+    public func resetReconnectStatistics() async {
+        await reconnectManager?.resetStatistics()
     }
     
     // MARK: - 私有方法
@@ -539,7 +686,7 @@ public final class WebSocketClient: WebSocketClientProtocol {
     
     /// 处理心跳超时
     private func handleHeartbeatTimeout() async {
-        print("💔 心跳超时，关闭连接")
+        print("💔 心跳超时，检测连接断开")
         
         // 更新状态为关闭中
         await stateManager.updateState(.closing)
@@ -549,6 +696,34 @@ public final class WebSocketClient: WebSocketClientProtocol {
         
         // 更新状态为已关闭
         await stateManager.updateState(.closed)
+        
+        // 如果启用了自动重连，尝试重连
+        if configuration.enableAutoReconnect, let url = currentURL {
+            print("🔄 心跳超时触发自动重连")
+            let timeoutError = WebSocketClientError.connectionTimeout("心跳超时")
+            await reconnectManager?.startReconnect(after: timeoutError)
+        }
+    }
+    
+    /// 处理重连事件
+    /// - Parameter event: 重连事件
+    private func handleReconnectEvent(_ event: WebSocketReconnectEvent) async {
+        switch event {
+        case .reconnectStarted(let attempt, let delay):
+            print("🔄 开始第\(attempt)次重连尝试，延迟\(delay)秒")
+            
+        case .reconnectFailed(let error, let attempt):
+            print("❌ 第\(attempt)次重连失败: \(error.localizedDescription)")
+            
+        case .reconnectSucceeded(let attempt, let totalTime):
+            print("✅ 第\(attempt)次重连成功，耗时\(String(format: "%.2f", totalTime))秒")
+            
+        case .reconnectAbandoned(let finalError, let totalAttempts):
+            print("⏹️ 重连已放弃，共尝试\(totalAttempts)次，最终错误: \(finalError.localizedDescription)")
+            
+        case .reconnectStatusUpdate(let message):
+            print("ℹ️ 重连状态: \(message)")
+        }
     }
     
     // MARK: - 关闭处理辅助方法
@@ -684,6 +859,7 @@ public enum WebSocketClientError: Error, LocalizedError {
     case invalidURL(String)
     case invalidState(String)
     case connectionFailed(Error)
+    case connectionTimeout(String)
     case handshakeFailed(String)
     case networkError(Error)
     case protocolError(String)
@@ -698,6 +874,8 @@ public enum WebSocketClientError: Error, LocalizedError {
             return "无效的状态: \(reason)"
         case .connectionFailed(let error):
             return "连接失败: \(error.localizedDescription)"
+        case .connectionTimeout(let reason):
+            return "连接超时: \(reason)"
         case .handshakeFailed(let reason):
             return "握手失败: \(reason)"
         case .networkError(let error):

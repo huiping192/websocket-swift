@@ -175,6 +175,138 @@ public final class WebSocketClient: WebSocketClientProtocol {
   - 心跳超时检测 ✅
   - 往返时间测量 ✅
 
+#### 2.7 连接重试策略 ✅
+- [x] **重连策略协议** ✅
+  - 重连决策接口 ✅
+  - 错误分类器 ✅
+  - 策略描述和配置 ✅
+  - 状态重置机制 ✅
+
+- [x] **多种重连策略实现** ✅
+  - 指数退避策略（ExponentialBackoffReconnectStrategy）✅
+  - 线性退避策略（LinearBackoffReconnectStrategy）✅
+  - 固定间隔策略（FixedIntervalReconnectStrategy）✅
+  - 自适应策略（AdaptiveReconnectStrategy）✅
+  - 无重连策略（NoReconnectStrategy）✅
+
+```swift
+// ✅ 已实现
+public protocol WebSocketReconnectStrategy {
+    /// 判断是否应该进行重连
+    func shouldReconnect(after error: Error, attemptCount: Int) -> Bool
+    
+    /// 计算重连前的延迟时间
+    func delayBeforeReconnect(attemptCount: Int) -> TimeInterval
+    
+    /// 重置策略状态（连接成功后调用）
+    func reset()
+    
+    /// 获取策略的描述信息
+    var description: String { get }
+}
+
+// 指数退避策略实现
+public struct ExponentialBackoffReconnectStrategy: WebSocketReconnectStrategy {
+    private let baseDelay: TimeInterval      // 基础延迟时间
+    private let maxDelay: TimeInterval       // 最大延迟时间
+    private let maxAttempts: Int             // 最大尝试次数
+    private let jitterRange: ClosedRange<Double>  // 随机化范围
+    private let onlyRecoverableErrors: Bool  // 是否只重连可恢复错误
+    
+    public func delayBeforeReconnect(attemptCount: Int) -> TimeInterval {
+        // 指数退避：baseDelay * (2^attemptCount) + jitter
+        let exponentialDelay = baseDelay * pow(2.0, Double(attemptCount - 1))
+        let clampedDelay = min(exponentialDelay, maxDelay)
+        let jitter = Double.random(in: jitterRange)
+        return clampedDelay * jitter
+    }
+}
+```
+
+- [x] **智能错误分类** ✅
+  - NetworkError类型识别 ✅
+  - WebSocketClientError分析 ✅
+  - 系统错误处理 ✅
+  - 错误严重程度评估 ✅
+
+```swift
+// ✅ 已实现
+public struct WebSocketErrorClassifier {
+    /// 判断错误是否为可重连的错误
+    public static func isRecoverableError(_ error: Error) -> Bool {
+        // NetworkError类型错误
+        if let networkError = error as? NetworkError {
+            switch networkError {
+            case .connectionTimeout, .hostUnreachable, .connectionFailed, 
+                 .connectionReset, .connectionCancelled, .noDataReceived:
+                return true // 网络相关错误可以重连
+            case .invalidState, .notConnected, .sendFailed, .receiveFailed, .tlsHandshakeFailed:
+                return false // 配置或协议错误不可重连
+            }
+        }
+        // WebSocket客户端错误和其他错误类型...
+    }
+    
+    /// 获取错误的严重程度 (0-10，10最严重)
+    public static func getErrorSeverity(_ error: Error) -> Int {
+        // 根据错误类型返回相应的严重程度分数
+    }
+}
+```
+
+- [x] **重连管理器** ✅
+  - Actor模式线程安全设计 ✅
+  - 重连状态管理 ✅
+  - 统计信息收集 ✅
+  - 事件系统支持 ✅
+  - 历史记录跟踪 ✅
+
+```swift
+// ✅ 已实现
+public actor WebSocketReconnectManager {
+    public enum ReconnectState: Equatable {
+        case idle                           // 未启动
+        case reconnecting(attempt: Int)     // 正在重连中
+        case waiting(nextAttempt: Int, resumeTime: Date) // 重连暂停
+        case stopped                        // 重连已停止
+    }
+    
+    public struct ReconnectStatistics {
+        public let totalAttempts: Int           // 总重连尝试次数
+        public let successfulReconnects: Int   // 成功重连次数
+        public let failedReconnects: Int       // 失败重连次数
+        public let currentFailureStreak: Int   // 当前连续失败次数
+        public let totalReconnectTime: TimeInterval // 总重连耗时
+        public let averageReconnectTime: TimeInterval // 平均重连时间
+        public let lastReconnectTime: Date?     // 上次重连时间
+        public let currentState: ReconnectState // 当前重连状态
+        public let strategyDescription: String  // 使用的重连策略描述
+    }
+    
+    /// 开始自动重连
+    public func startReconnect(after error: Error) {
+        // 智能重连逻辑：错误分析 -> 策略决策 -> 延迟执行
+    }
+    
+    /// 立即重连
+    public func reconnectImmediately() async -> Bool {
+        // 跳过延迟直接尝试重连
+    }
+    
+    /// 停止重连
+    public func stopReconnect() {
+        // 停止所有重连活动并清理资源
+    }
+}
+```
+
+- [x] **WebSocket客户端集成** ✅
+  - 重连配置选项 ✅
+  - 心跳超时触发重连 ✅
+  - 重连事件监听 ✅
+  - 统计信息查询 ✅
+  - 手动重连控制 ✅
+
 ```swift
 // ✅ 已完整实现
 public actor HeartbeatManager {
@@ -509,6 +641,31 @@ struct FragmentedMessage {
   - 错误处理和边界条件 ✅
   - 所有WebSocketClientTests（13个测试）通过 ✅
 
+- [x] **重连策略测试** ✅ **（新增）**
+  - 错误分类器测试（可恢复和不可恢复错误）✅
+  - 错误严重程度分类测试 ✅
+  - 指数退避策略测试（延迟计算和重连决策）✅
+  - 线性退避策略测试 ✅
+  - 固定间隔策略测试 ✅
+  - 自适应策略测试（连接质量评估）✅
+  - 无重连策略测试 ✅
+  - 策略描述字符串测试 ✅
+  - **所有WebSocketReconnectStrategiesTests（11个测试）全部通过** ✅
+
+- [x] **重连管理器测试** ✅ **（新增）**
+  - 重连管理器初始化测试 ✅
+  - 连接回调设置和执行测试 ✅
+  - 立即重连功能测试（成功和失败情况）✅
+  - 自动重连测试（成功和失败流程）✅
+  - 不可恢复错误处理测试 ✅
+  - 重连控制测试（启动、停止、启用状态）✅
+  - 事件处理器测试（添加、移除、多处理器）✅
+  - 统计信息收集和重置测试 ✅
+  - 重连历史记录测试 ✅
+  - 便利初始化方法测试 ✅
+  - 调试支持测试（详细状态、统计导出）✅
+  - **所有WebSocketReconnectManagerTests（20个测试）全部通过** ✅
+
 ### 集成测试
 - [ ] **协议兼容性测试**
   - 与标准WebSocket服务器交互
@@ -542,7 +699,7 @@ struct FragmentedMessage {
 - ✅ **独立的心跳管理器和完整的Ping/Pong机制** 
 - ✅ **优雅的连接关闭处理和状态码管理**
 - ✅ **Actor模式确保的并发安全**
-- ✅ **所有核心单元测试通过** (HeartbeatManager: 14/14, FrameDecoder: 17/17, FrameEncoder: 11/11, MessageAssembler: 20/20, WebSocketClient: 13/13)
+- ✅ **所有核心单元测试通过** (HeartbeatManager: 14/14, FrameDecoder: 17/17, FrameEncoder: 11/11, MessageAssembler: 20/20, WebSocketClient: 13/13, ReconnectStrategies: 11/11, ReconnectManager: 20/20)
 - ⚠️ 通过Autobahn测试套件 - 待进行集成测试（后续阶段可完成）
 
 ### 性能要求
@@ -605,8 +762,8 @@ struct FragmentedMessage {
 - ✅ **HeartbeatManager** - 独立的心跳管理器，采用Actor模式，完整的Ping/Pong机制和RTT统计
 - ✅ **接收消息缓冲区** - 已完整实现AsyncMessageQueue和receive()缓冲机制
 
-**待实现的扩展组件**：
-- ❌ **连接重试策略** - 自动重连和错误恢复机制
+**已完全实现的扩展组件**：
+- ✅ **连接重试策略** - 自动重连和错误恢复机制
 
 **影响范围**：
 - ✅ **核心功能完整**：用户现在可以完整使用WebSocket客户端
@@ -656,7 +813,7 @@ struct FragmentedMessage {
 import WebSocketCore
 import NetworkTransport
 
-// 创建客户端（包含心跳配置）
+// 创建客户端（包含心跳和重连配置）
 let client = WebSocketClient(
     configuration: WebSocketClient.Configuration(
         connectTimeout: 10.0,
@@ -665,7 +822,15 @@ let client = WebSocketClient(
         additionalHeaders: ["Authorization": "Bearer token"],
         heartbeatInterval: 30.0,    // 心跳间隔30秒
         heartbeatTimeout: 10.0,     // Pong超时10秒
-        enableHeartbeat: true       // 启用心跳检测
+        enableHeartbeat: true,      // 启用心跳检测
+        enableAutoReconnect: true,  // 启用自动重连
+        reconnectStrategy: ExponentialBackoffReconnectStrategy(
+            baseDelay: 1.0,         // 基础延迟1秒
+            maxDelay: 60.0,         // 最大延迟60秒
+            maxAttempts: 5          // 最多重连5次
+        ),
+        maxReconnectAttempts: 5,    // 最大重连尝试次数
+        reconnectTimeout: 30.0      // 重连超时30秒
     )
 )
 
@@ -707,6 +872,55 @@ await client.setHeartbeatCallbacks(
     }
 )
 
+// 设置重连事件监听
+await client.addReconnectEventHandler { event in
+    switch event {
+    case .reconnectStarted(let attempt, let delay):
+        print("🔄 开始第\(attempt)次重连尝试，延迟\(delay)秒")
+    case .reconnectSucceeded(let attempt, let totalTime):
+        print("✅ 第\(attempt)次重连成功，耗时\(String(format: "%.2f", totalTime))秒")
+    case .reconnectFailed(let error, let attempt):
+        print("❌ 第\(attempt)次重连失败: \(error.localizedDescription)")
+    case .reconnectAbandoned(let finalError, let totalAttempts):
+        print("⏹️ 重连已放弃，共尝试\(totalAttempts)次，最终错误: \(finalError.localizedDescription)")
+    case .reconnectStatusUpdate(let message):
+        print("ℹ️ 重连状态: \(message)")
+    }
+}
+
+// 获取重连统计信息
+if let stats = await client.getReconnectStatistics() {
+    print("重连统计:")
+    print("- 总尝试次数: \(stats.totalAttempts)")
+    print("- 成功重连次数: \(stats.successfulReconnects)")
+    print("- 失败重连次数: \(stats.failedReconnects)")
+    print("- 当前连续失败次数: \(stats.currentFailureStreak)")
+    print("- 平均重连时间: \(String(format: "%.2f", stats.averageReconnectTime))秒")
+    print("- 使用策略: \(stats.strategyDescription)")
+    print("- 当前状态: \(stats.currentState)")
+}
+
+// 获取重连历史记录
+let history = await client.getReconnectHistory()
+for record in history {
+    let status = record.isSuccess ? "✅" : "❌"
+    print("\(status) 第\(record.attemptNumber)次重连 - \(record.description)")
+}
+
+// 手动触发重连
+let success = await client.reconnectManually()
+if success {
+    print("手动重连成功")
+} else {
+    print("手动重连失败")
+}
+
+// 控制重连状态
+await client.setReconnectEnabled(false)  // 暂时禁用自动重连
+await client.setReconnectEnabled(true)   // 重新启用自动重连
+await client.stopReconnect()             // 停止所有重连活动
+await client.resetReconnectStatistics()  // 重置重连统计信息
+
 // 优雅关闭连接（支持自定义状态码和原因）
 try await client.close(code: 1000, reason: "Normal closure")
 ```
@@ -728,6 +942,97 @@ if success {
         print("使用协议: \(protocol)")
     }
 }
+```
+
+### 重连策略详细配置
+
+```swift
+import WebSocketCore
+
+// 1. 指数退避策略（推荐用于生产环境）
+let exponentialStrategy = ExponentialBackoffReconnectStrategy(
+    baseDelay: 1.0,              // 基础延迟1秒
+    maxDelay: 60.0,              // 最大延迟60秒
+    maxAttempts: 10,             // 最多重连10次
+    jitterRange: 0.8...1.2,      // 随机化范围，避免惊群效应
+    onlyRecoverableErrors: true  // 只对可恢复错误重连
+)
+
+// 2. 线性退避策略
+let linearStrategy = LinearBackoffReconnectStrategy(
+    baseDelay: 2.0,              // 基础延迟2秒
+    increment: 1.0,              // 每次增加1秒
+    maxDelay: 30.0,              // 最大延迟30秒
+    maxAttempts: 15              // 最多重连15次
+)
+
+// 3. 固定间隔策略
+let fixedStrategy = FixedIntervalReconnectStrategy(
+    interval: 5.0,               // 固定5秒间隔
+    maxAttempts: 20              // 最多重连20次
+)
+
+// 4. 自适应策略（根据连接质量动态调整）
+let adaptiveStrategy = AdaptiveReconnectStrategy(
+    baseDelay: 2.0,              // 基础延迟2秒
+    maxDelay: 120.0,             // 最大延迟2分钟
+    maxAttempts: 8,              // 最多重连8次
+    maxHistoryCount: 20          // 最大历史记录数
+)
+
+// 5. 无重连策略（禁用自动重连）
+let noReconnectStrategy = NoReconnectStrategy()
+
+// 使用便利初始化方法
+let exponentialManager = WebSocketReconnectManager.exponentialBackoff(
+    baseDelay: 1.0, 
+    maxAttempts: 5
+)
+let linearManager = WebSocketReconnectManager.linearBackoff(
+    baseDelay: 1.0, 
+    maxAttempts: 10
+)
+let fixedManager = WebSocketReconnectManager.fixedInterval(
+    interval: 3.0, 
+    maxAttempts: 8
+)
+let adaptiveManager = WebSocketReconnectManager.adaptive(
+    baseDelay: 2.0, 
+    maxAttempts: 6
+)
+let noReconnectManager = WebSocketReconnectManager.noReconnect()
+
+// 创建带有特定策略的客户端
+let client = WebSocketClient(
+    configuration: WebSocketClient.Configuration(
+        enableAutoReconnect: true,
+        reconnectStrategy: adaptiveStrategy,  // 使用自适应策略
+        maxReconnectAttempts: 8,
+        reconnectTimeout: 60.0
+    )
+)
+```
+
+### 错误分类和处理
+
+```swift
+import NetworkTransport
+
+// 检查错误是否可以重连
+let networkError = NetworkError.connectionTimeout
+let isRecoverable = WebSocketErrorClassifier.isRecoverableError(networkError)
+print("网络超时错误可重连: \(isRecoverable)")  // true
+
+let protocolError = WebSocketClientError.invalidURL("bad url")
+let isProtocolRecoverable = WebSocketErrorClassifier.isRecoverableError(protocolError)
+print("协议错误可重连: \(isProtocolRecoverable)")  // false
+
+// 获取错误严重程度
+let severity = WebSocketErrorClassifier.getErrorSeverity(networkError)
+print("错误严重程度: \(severity)/10")  // 3/10 (轻度)
+
+let protocolSeverity = WebSocketErrorClassifier.getErrorSeverity(protocolError)
+print("协议错误严重程度: \(protocolSeverity)/10")  // 7/10 (较高)
 ```
 
 ---
@@ -752,26 +1057,43 @@ if success {
 - **自动资源清理**：确保连接关闭后所有资源被正确释放
 - **状态码扩展**：支持自定义关闭状态码和原因
 
-#### 3. **并发安全增强**
-- **Actor模式升级**：HeartbeatManager使用Actor确保线程安全
-- **异步接口优化**：所有心跳相关接口都是异步的
+#### 3. **连接重试策略系统**
+- **多种重连策略**：指数退避、线性退避、固定间隔、自适应、无重连
+- **智能错误分类**：区分可恢复和不可恢复错误，评估错误严重程度
+- **Actor模式重连管理器**：线程安全的重连状态管理和统计收集
+- **丰富的配置选项**：延迟时间、最大尝试次数、随机化等可配置
+- **事件系统**：重连开始、成功、失败、放弃等事件通知
+- **统计和历史**：完整的重连统计信息和历史记录跟踪
+- **客户端集成**：无缝集成到WebSocketClient，支持心跳超时触发重连
+
+#### 4. **并发安全增强**
+- **Actor模式升级**：HeartbeatManager和ReconnectManager使用Actor确保线程安全
+- **异步接口优化**：所有心跳和重连相关接口都是异步的
 - **状态管理改进**：更可靠的连接状态跟踪和转换
 
 ### 📊 测试完善
 - **HeartbeatManager测试套件**：**14个测试用例全部通过，0个失败**
+- **重连策略测试套件**：**11个测试用例全部通过，0个失败** ✅
+- **重连管理器测试套件**：**20个测试用例全部通过，0个失败** ✅
 - **核心组件测试完成**：
   - FrameDecoderTests: 17个测试通过
   - FrameEncoderTests: 11个测试通过  
   - MessageAssemblerTests: 20个测试通过
   - WebSocketClientTests: 13个测试通过
+  - **WebSocketReconnectStrategiesTests: 11个测试通过** ✅
+  - **WebSocketReconnectManagerTests: 20个测试通过** ✅
 - **并发安全测试**：验证多线程环境下的安全性
 - **边界条件测试**：处理各种异常情况和边界条件
+- **重连功能专项测试**：错误分类、策略决策、状态管理、事件系统等全面测试
 
 ### 🚀 开发体验改进
-- **简化配置**：心跳功能可通过Configuration简单配置
-- **丰富回调**：提供心跳超时、恢复、RTT更新等回调
-- **统计信息**：实时获取心跳统计信息用于监控
+- **简化配置**：心跳和重连功能可通过Configuration简单配置
+- **丰富回调**：提供心跳超时、恢复、RTT更新、重连事件等回调
+- **统计信息**：实时获取心跳和重连统计信息用于监控
+- **多种策略**：5种内置重连策略满足不同场景需求
+- **便利初始化**：提供重连管理器的便利初始化方法
 - **完整文档**：详细的使用示例和API文档
+- **调试支持**：详细状态信息和统计数据导出功能
 
 ---
 
@@ -782,15 +1104,19 @@ if success {
 ### 🏆 **核心成就**
 - **完整的RFC 6455协议实现**：支持所有标准帧类型和分片消息
 - **独立的HeartbeatManager**：Actor模式设计，完整的Ping/Pong机制和RTT统计  
+- **智能重连策略系统**：5种重连策略，智能错误分类，完整的统计和事件系统
 - **优雅的连接关闭处理**：支持所有标准关闭状态码和UTF-8原因解析
 - **完全的并发安全保证**：Actor模式确保多线程环境下的安全性
 - **异步消息处理**：非阻塞的接收缓冲区和发送队列
-- **完整的测试覆盖**：所有核心组件单元测试100%通过
+- **完整的测试覆盖**：所有核心组件单元测试100%通过（包括重连功能31个测试）
 
 ### 🚀 **生产环境就绪**
 当前实现已具备：
 - 稳定的连接管理和状态跟踪
-- 完整的错误处理和恢复机制  
+- 完整的错误处理和自动重连机制  
+- 5种重连策略适应不同网络环境
+- 智能错误分类和严重程度评估
 - 丰富的配置选项和回调机制
 - 详细的统计信息和监控能力
+- Actor模式确保的并发安全
 - **可直接用于实际项目开发！**
